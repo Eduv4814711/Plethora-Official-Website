@@ -1,31 +1,9 @@
 import type { Metadata } from "next";
-import { Inter, Roboto, Roboto_Mono } from "next/font/google";
 import "./globals.css";
 import { SiteHeader } from "@/components/site-header";
 import { SiteFooter } from "@/components/site-footer";
 import { siteConfig } from "@/lib/site-config";
 import { getSiteSettings } from "@/lib/site-settings";
-
-const inter = Inter({
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
-  variable: "--font-inter",
-  display: "swap",
-});
-
-const roboto = Roboto({
-  subsets: ["latin"],
-  weight: ["400", "500"],
-  variable: "--font-roboto",
-  display: "swap",
-});
-
-const robotoMono = Roboto_Mono({
-  subsets: ["latin"],
-  weight: ["400", "500"],
-  variable: "--font-roboto-mono",
-  display: "swap",
-});
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteConfig.url),
@@ -75,10 +53,19 @@ export default function RootLayout({
   const settings = getSiteSettings();
 
   return (
-    <html
-      lang="en-ZA"
-      className={`${inter.variable} ${roboto.variable} ${robotoMono.variable}`}
-    >
+    <html lang="en-ZA">
+      <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link
+          rel="preconnect"
+          href="https://fonts.gstatic.com"
+          crossOrigin="anonymous"
+        />
+        <link
+          rel="stylesheet"
+          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Roboto+Mono:wght@400;500&family=Roboto:wght@400;500&display=swap"
+        />
+      </head>
       <body className="flex min-h-dvh flex-col bg-white text-black antialiased">
         <SiteHeader settings={settings} />
         <main id="main-content" className="flex-1">
