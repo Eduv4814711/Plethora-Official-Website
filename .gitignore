@@ -1,0 +1,44 @@
+# Dependencies
+/node_modules
+/.pnp
+.pnp.js
+
+# Next.js build output
+/.next/
+/out/
+
+# Production
+/build
+
+# Local env files (never commit secrets)
+.env
+.env*.local
+
+# Local runtime submission store (contains user enquiries/signups in dev)
+/data/submissions/*.jsonl
+
+# Debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Vercel
+.vercel
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# Confidential reference documents & local design source files
+# (Official web-ready SVG brand assets are tracked in /public/brand/)
+/Plethora_Business_Plan_Final_v1.pdf
+/Screenshots/
+/Brand Guidelines.svg
+/Logo/
+/Plethora Official Website Promt.md
+/Original Plethora Logo*.svg
+/Plethora Official  Favicon.svg
+/data/site-settings.json
+
+
