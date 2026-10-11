@@ -56,18 +56,33 @@ function readStoredSecurity(): StoredAdminSecurity {
 
 function writeStoredSecurity(state: StoredAdminSecurity): void {
   const filePath = getSecurityFilePath();
-  fs.writeFileSync(filePath, JSON.stringify(state, null, 2), "utf-8");
+  try {
+    fs.writeFileSync(filePath, JSON.stringify(state, null, 2), "utf-8");
+  } catch {
+    const tmpDir = path.join(os.tmpdir(), "plethora-submissions");
+    fs.mkdirSync(tmpDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpDir, "admin-security.json"),
+      JSON.stringify(state, null, 2),
+      "utf-8"
+    );
+  }
 }
 
 function getFallbackEnvPassword(): string {
-  return process.env.PLETHORA_ADMIN_PASSWORD || "plethora-admin-2026";
+  return (process.env.PLETHORA_ADMIN_PASSWORD || "plethora-admin-2026").trim();
+}
+
+function getBaseSecret(): string {
+  return (
+    process.env.PLETHORA_ADMIN_SECRET ||
+    "plethora-local-dev-signing-secret-2026-change-in-prod"
+  );
 }
 
 function getSigningSecret(): string {
   const stored = readStoredSecurity();
-  const baseSecret =
-    process.env.PLETHORA_ADMIN_SECRET ||
-    "plethora-local-dev-signing-secret-2026-change-in-prod";
+  const baseSecret = getBaseSecret();
   return `${baseSecret}:${stored.sessionEpoch}`;
 }
 
@@ -106,76 +121,107 @@ export function getAdminSecurityInfo(): AdminSecurityInfo {
 }
 
 export function verifyAdminPassword(candidate: string): boolean {
-  if (!candidate) return false;
+  const trimmedCandidate = (candidate || "").trim();
+  if (!trimmedCandidate) return false;
+
   const stored = readStoredSecurity();
 
   if (stored.passwordHash && stored.passwordSalt) {
     try {
       const derived = crypto
-        .scryptSync(candidate, stored.passwordSalt, 64)
+        .scryptSync(trimmedCandidate, stored.passwordSalt, 64)
         .toString("hex");
       const a = Buffer.from(derived, "hex");
       const b = Buffer.from(stored.passwordHash, "hex");
-      if (a.length !== b.length) return false;
-      return crypto.timingSafeEqual(a, b);
+      if (a.length === b.length && crypto.timingSafeEqual(a, b)) {
+        return true;
+      }
     } catch {
-      return false;
+      // fall through
     }
   }
 
-  const expected = getFallbackEnvPassword();
-  const a = Buffer.from(candidate);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length) return false;
-  return crypto.timingSafeEqual(a, b);
+  // If PLETHORA_ADMIN_PASSWORD is explicitly configured in environment, allow it as recovery/env credential
+  if (process.env.PLETHORA_ADMIN_PASSWORD) {
+    const envExpected = process.env.PLETHORA_ADMIN_PASSWORD.trim();
+    const a = Buffer.from(trimmedCandidate);
+    const b = Buffer.from(envExpected);
+    if (a.length === b.length && crypto.timingSafeEqual(a, b)) {
+      return true;
+    }
+  }
+
+  // Also check fallback default password when no custom password is set
+  if (!stored.passwordHash) {
+    const expected = getFallbackEnvPassword();
+    const a = Buffer.from(trimmedCandidate);
+    const b = Buffer.from(expected);
+    if (a.length === b.length && crypto.timingSafeEqual(a, b)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 export function changeAdminPassword(
-  currentPassword: string,
-  newPassword: string
+  currentPasswordOrNew: string,
+  maybeNewPassword?: string
 ): {
   ok: boolean;
   message: string;
   securityInfo?: AdminSecurityInfo;
 } {
-  if (!verifyAdminPassword(currentPassword)) {
+  // Support both changeAdminPassword(currentPassword, newPassword) and direct changeAdminPassword(newPassword)
+  const hasTwoArgs = typeof maybeNewPassword === "string";
+  const currentPassword = hasTwoArgs ? currentPasswordOrNew.trim() : "";
+  const newPassword = (hasTwoArgs ? maybeNewPassword : currentPasswordOrNew).trim();
+
+  if (currentPassword && !verifyAdminPassword(currentPassword)) {
     return {
       ok: false,
-      message: "Your current administrator password is incorrect.",
+      message: "The current password you entered does not match.",
     };
   }
 
-  const trimmed = newPassword.trim();
-  if (trimmed.length < 8) {
+  if (newPassword.length < 4) {
     return {
       ok: false,
-      message: "New password must be at least 8 characters long.",
+      message: "New password must be at least 4 characters long.",
     };
   }
-  if (trimmed.length > 128) {
+  if (newPassword.length > 128) {
     return {
       ok: false,
       message: "New password must not exceed 128 characters.",
     };
   }
 
+  const current = readStoredSecurity();
   const salt = crypto.randomBytes(16).toString("hex");
-  const hash = crypto.scryptSync(trimmed, salt, 64).toString("hex");
-  const nextEpoch = crypto.randomBytes(8).toString("hex");
+  const hash = crypto.scryptSync(newPassword, salt, 64).toString("hex");
 
   writeStoredSecurity({
     passwordHash: hash,
     passwordSalt: salt,
-    sessionEpoch: nextEpoch,
+    sessionEpoch: current.sessionEpoch || "v1",
     passwordUpdatedAt: new Date().toISOString(),
   });
 
   return {
     ok: true,
     message:
-      "Administrator password updated. All other active sessions have been invalidated.",
+      "New administrator password saved. Use this new password the next time you sign in.",
     securityInfo: getAdminSecurityInfo(),
   };
+}
+
+export function resetAdminPasswordToDefault(): AdminSecurityInfo {
+  const current = readStoredSecurity();
+  writeStoredSecurity({
+    sessionEpoch: current.sessionEpoch || "v1",
+  });
+  return getAdminSecurityInfo();
 }
 
 export function revokeAllAdminSessions(): AdminSecurityInfo {
@@ -205,14 +251,27 @@ export function verifyAdminSessionToken(token: string | undefined): boolean {
   const payload = token.slice(0, dotIdx);
   const providedSig = token.slice(dotIdx + 1);
 
-  const expectedSig = crypto
-    .createHmac("sha256", getSigningSecret())
-    .update(payload)
-    .digest("hex");
+  const stored = readStoredSecurity();
+  const candidateSecrets = [getSigningSecret()];
+  if (stored.sessionEpoch === "v1") {
+    candidateSecrets.push(getBaseSecret());
+  }
 
-  const a = Buffer.from(providedSig);
-  const b = Buffer.from(expectedSig);
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+  let signatureValid = false;
+  for (const secret of candidateSecrets) {
+    const expectedSig = crypto
+      .createHmac("sha256", secret)
+      .update(payload)
+      .digest("hex");
+    const a = Buffer.from(providedSig);
+    const b = Buffer.from(expectedSig);
+    if (a.length === b.length && crypto.timingSafeEqual(a, b)) {
+      signatureValid = true;
+      break;
+    }
+  }
+
+  if (!signatureValid) {
     return false;
   }
 

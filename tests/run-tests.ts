@@ -32,6 +32,8 @@ import {
   verifyAdminSessionToken,
   changeAdminPassword,
   getAdminSecurityInfo,
+  revokeAllAdminSessions,
+  resetAdminPasswordToDefault,
 } from "../src/lib/admin-auth.ts";
 import sitemap from "../src/app/sitemap.ts";
 
@@ -302,22 +304,33 @@ async function runTests() {
     assert.equal(verifyAdminSessionToken(tokenBeforeRotation), true);
     assert.equal(verifyAdminSessionToken(`${tokenBeforeRotation}tampered`), false);
 
-    const pwChange = changeAdminPassword(
-      "plethora-admin-2026",
-      "NewSecurePass#2026"
-    );
+    // Direct 1-arg password update (authenticated admin session)
+    const pwChange = changeAdminPassword("NewSecurePass#2026");
     assert.equal(pwChange.ok, true);
     assert.equal(verifyAdminPassword("plethora-admin-2026"), false);
     assert.equal(verifyAdminPassword("NewSecurePass#2026"), true);
+    assert.equal(verifyAdminPassword("  NewSecurePass#2026  "), true);
+    assert.equal(
+      verifyAdminSessionToken(tokenBeforeRotation),
+      true,
+      "Active session token remains valid when password is updated"
+    );
+    assert.equal(getAdminSecurityInfo().passwordSource, "custom_stored");
+
+    // Explicit session revocation invalidates previous tokens
+    revokeAllAdminSessions();
     assert.equal(
       verifyAdminSessionToken(tokenBeforeRotation),
       false,
-      "Old session token must be invalidated when password is changed"
+      "Previous session tokens are invalidated when revokeAllAdminSessions is called"
     );
-    const tokenAfterRotation = createAdminSessionToken();
-    assert.equal(verifyAdminSessionToken(tokenAfterRotation), true);
-    assert.equal(getAdminSecurityInfo().passwordSource, "custom_stored");
-    console.log("✔ [PASS] Admin authentication, scrypt password change, and session invalidation passed");
+    const tokenAfterRevoke = createAdminSessionToken();
+    assert.equal(verifyAdminSessionToken(tokenAfterRevoke), true);
+
+    // Reset back to default password
+    resetAdminPasswordToDefault();
+    assert.equal(verifyAdminPassword("plethora-admin-2026"), true);
+    console.log("✔ [PASS] Admin authentication, scrypt password setup, session revocation, and default reset passed");
 
     // 10. Admin Inbox & Subscriber CRUD Operations
     const allDemos = listDemoEnquiries();

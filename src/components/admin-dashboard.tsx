@@ -264,7 +264,6 @@ export function AdminDashboard({
 
   // Settings & Password state
   const [savingSettings, setSavingSettings] = useState(false);
-  const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPasswords, setShowPasswords] = useState(false);
@@ -604,6 +603,51 @@ export function AdminDashboard({
     e.preventDefault();
     setSavingSettings(true);
     try {
+      // If user also typed a new password into the password fields above, save it simultaneously
+      if (newPassword.trim().length > 0) {
+        if (newPassword.trim().length < 4) {
+          setPasswordFeedback({
+            ok: false,
+            message: "New password must be at least 4 characters long.",
+          });
+          setSavingSettings(false);
+          return;
+        }
+        if (
+          confirmPassword.trim().length > 0 &&
+          newPassword.trim() !== confirmPassword.trim()
+        ) {
+          setPasswordFeedback({
+            ok: false,
+            message: "New password and confirmation password do not match.",
+          });
+          setSavingSettings(false);
+          return;
+        }
+
+        const pwRes = await fetch("/api/admin/auth", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "change_password",
+            newPassword: newPassword.trim(),
+            confirmPassword: confirmPassword.trim() || newPassword.trim(),
+          }),
+        });
+        const pwData = await pwRes.json();
+        if (pwRes.ok && pwData.ok) {
+          setNewPassword("");
+          setConfirmPassword("");
+          if (pwData.securityInfo) setSecurityInfo(pwData.securityInfo);
+          setPasswordFeedback({
+            ok: true,
+            message:
+              pwData.message ||
+              "New administrator password saved.",
+          });
+        }
+      }
+
       const res = await fetch("/api/admin/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -650,15 +694,18 @@ export function AdminDashboard({
     e.preventDefault();
     setPasswordFeedback(null);
 
-    if (newPassword.trim().length < 8) {
+    const trimmedNew = newPassword.trim();
+    const trimmedConfirm = confirmPassword.trim();
+
+    if (trimmedNew.length < 4) {
       setPasswordFeedback({
         ok: false,
-        message: "New password must be at least 8 characters long.",
+        message: "New password must be at least 4 characters long.",
       });
       return;
     }
 
-    if (newPassword !== confirmPassword) {
+    if (trimmedConfirm.length > 0 && trimmedNew !== trimmedConfirm) {
       setPasswordFeedback({
         ok: false,
         message: "New password and confirmation password do not match.",
@@ -673,14 +720,12 @@ export function AdminDashboard({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "change_password",
-          currentPassword,
-          newPassword,
-          confirmPassword,
+          newPassword: trimmedNew,
+          confirmPassword: trimmedConfirm || trimmedNew,
         }),
       });
       const data = await res.json();
       if (res.ok && data.ok) {
-        setCurrentPassword("");
         setNewPassword("");
         setConfirmPassword("");
         if (data.securityInfo) {
@@ -690,7 +735,7 @@ export function AdminDashboard({
           ok: true,
           message:
             data.message ||
-            "Administrator password updated and active session refreshed.",
+            "New administrator password saved. Use this password the next time you sign in.",
         });
         showToast("Administrator password updated.");
       } else {
@@ -704,6 +749,38 @@ export function AdminDashboard({
         ok: false,
         message: "Network error while updating password.",
       });
+    } finally {
+      setChangingPassword(false);
+    }
+  }
+
+  async function handleResetDefaultPassword() {
+    if (
+      !window.confirm(
+        "Reset the administrator password back to the default (plethora-admin-2026)?"
+      )
+    ) {
+      return;
+    }
+    setChangingPassword(true);
+    setPasswordFeedback(null);
+    try {
+      const res = await fetch("/api/admin/auth", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "reset_default_password" }),
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        if (data.securityInfo) setSecurityInfo(data.securityInfo);
+        setPasswordFeedback({
+          ok: true,
+          message:
+            data.message ||
+            "Administrator password restored to default (plethora-admin-2026).",
+        });
+        showToast("Password restored to default (plethora-admin-2026).");
+      }
     } finally {
       setChangingPassword(false);
     }
@@ -2075,42 +2152,23 @@ export function AdminDashboard({
                   </span>
                 </div>
 
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                  <div>
-                    <label
-                      htmlFor="current-admin-password"
-                      className="block text-xs font-medium text-black"
-                    >
-                      Current Password *
-                    </label>
-                    <input
-                      id="current-admin-password"
-                      type={showPasswords ? "text" : "password"}
-                      required
-                      autoComplete="current-password"
-                      value={currentPassword}
-                      onChange={(e) => setCurrentPassword(e.target.value)}
-                      placeholder="Current password..."
-                      className="mt-1.5 w-full rounded-lg border border-[#d0ceca] bg-white px-3.5 py-2 text-sm text-black focus:border-[#ff6e14] focus:outline-none"
-                    />
-                  </div>
-
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
                     <label
                       htmlFor="new-admin-password"
                       className="block text-xs font-medium text-black"
                     >
-                      New Password (min 8 chars) *
+                      New Administrator Password (min 4 chars) *
                     </label>
                     <input
                       id="new-admin-password"
                       type={showPasswords ? "text" : "password"}
                       required
-                      minLength={8}
+                      minLength={4}
                       autoComplete="new-password"
                       value={newPassword}
                       onChange={(e) => setNewPassword(e.target.value)}
-                      placeholder="New strong password..."
+                      placeholder="Enter new admin password..."
                       className="mt-1.5 w-full rounded-lg border border-[#d0ceca] bg-white px-3.5 py-2 text-sm text-black focus:border-[#ff6e14] focus:outline-none"
                     />
                   </div>
@@ -2126,7 +2184,7 @@ export function AdminDashboard({
                       id="confirm-admin-password"
                       type={showPasswords ? "text" : "password"}
                       required
-                      minLength={8}
+                      minLength={4}
                       autoComplete="new-password"
                       value={confirmPassword}
                       onChange={(e) => setConfirmPassword(e.target.value)}
@@ -2165,18 +2223,32 @@ export function AdminDashboard({
                     <span>Show password characters</span>
                   </label>
 
-                  <button
-                    type="submit"
-                    disabled={changingPassword}
-                    className="inline-flex items-center gap-2 rounded-lg bg-black px-4 py-2.5 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-60 cursor-pointer"
-                  >
-                    <KeyRound className="h-3.5 w-3.5 text-[#ff6e14]" aria-hidden="true" />
-                    <span>
-                      {changingPassword
-                        ? "Updating Password..."
-                        : "Update Administrator Password"}
-                    </span>
-                  </button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {securityInfo.passwordSource === "custom_stored" && (
+                      <button
+                        type="button"
+                        disabled={changingPassword}
+                        onClick={handleResetDefaultPassword}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-[#d0ceca] bg-[#f7f6f2] px-3.5 py-2.5 text-xs font-medium text-black hover:bg-[#e4e4e4] disabled:opacity-60 cursor-pointer"
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                        <span>Restore Default Password</span>
+                      </button>
+                    )}
+
+                    <button
+                      type="submit"
+                      disabled={changingPassword}
+                      className="inline-flex items-center gap-2 rounded-lg bg-black px-4 py-2.5 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-60 cursor-pointer"
+                    >
+                      <KeyRound className="h-3.5 w-3.5 text-[#ff6e14]" aria-hidden="true" />
+                      <span>
+                        {changingPassword
+                          ? "Updating Password..."
+                          : "Update Administrator Password"}
+                      </span>
+                    </button>
+                  </div>
                 </div>
               </form>
 
