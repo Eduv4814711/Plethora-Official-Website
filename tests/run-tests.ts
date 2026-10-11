@@ -30,6 +30,8 @@ import {
   verifyAdminPassword,
   createAdminSessionToken,
   verifyAdminSessionToken,
+  changeAdminPassword,
+  getAdminSecurityInfo,
 } from "../src/lib/admin-auth.ts";
 import sitemap from "../src/app/sitemap.ts";
 
@@ -293,13 +295,29 @@ async function runTests() {
     }
     console.log("✔ [PASS] Confidentiality & employee PII guardrails verified across all source and blog files");
 
-    // 9. Admin Console Authentication & Session Signing
+    // 9. Admin Console Authentication, Password Rotation & Session Signing
     assert.equal(verifyAdminPassword("plethora-admin-2026"), true);
     assert.equal(verifyAdminPassword("wrong-password"), false);
-    const token = createAdminSessionToken();
-    assert.equal(verifyAdminSessionToken(token), true);
-    assert.equal(verifyAdminSessionToken(`${token}tampered`), false);
-    console.log("✔ [PASS] Admin authentication and HMAC-SHA256 session token verification passed");
+    const tokenBeforeRotation = createAdminSessionToken();
+    assert.equal(verifyAdminSessionToken(tokenBeforeRotation), true);
+    assert.equal(verifyAdminSessionToken(`${tokenBeforeRotation}tampered`), false);
+
+    const pwChange = changeAdminPassword(
+      "plethora-admin-2026",
+      "NewSecurePass#2026"
+    );
+    assert.equal(pwChange.ok, true);
+    assert.equal(verifyAdminPassword("plethora-admin-2026"), false);
+    assert.equal(verifyAdminPassword("NewSecurePass#2026"), true);
+    assert.equal(
+      verifyAdminSessionToken(tokenBeforeRotation),
+      false,
+      "Old session token must be invalidated when password is changed"
+    );
+    const tokenAfterRotation = createAdminSessionToken();
+    assert.equal(verifyAdminSessionToken(tokenAfterRotation), true);
+    assert.equal(getAdminSecurityInfo().passwordSource, "custom_stored");
+    console.log("✔ [PASS] Admin authentication, scrypt password change, and session invalidation passed");
 
     // 10. Admin Inbox & Subscriber CRUD Operations
     const allDemos = listDemoEnquiries();

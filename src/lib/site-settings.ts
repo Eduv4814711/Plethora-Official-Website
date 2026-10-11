@@ -7,6 +7,7 @@ export interface DynamicSiteSettings {
   heroBadgeText: string;
   heroHeadline: string;
   heroSubheadline: string;
+  primaryCtaLabel: string;
   contactEmail: string;
   appLoginUrl: string;
   showInternalDeploymentMetrics: boolean;
@@ -15,14 +16,19 @@ export interface DynamicSiteSettings {
   announcementText: string;
   announcementLinkText: string;
   announcementLinkHref: string;
+  acceptingDemoRequests: boolean;
+  acceptingEmailSignups: boolean;
+  notificationRecipientEmail: string;
+  webhookForwardingUrl: string;
   updatedAt: string;
 }
 
-const DEFAULT_SETTINGS: DynamicSiteSettings = {
+export const DEFAULT_SITE_SETTINGS: DynamicSiteSettings = {
   heroBadgeText: "Built in South Africa for Private Security Operations",
   heroHeadline: "AI workforce management for private security.",
   heroSubheadline:
     "Connect guard deployment, rostering, attendance, payroll support and operational workflows in one platform built for the realities of security operations.",
+  primaryCtaLabel: "Request a demo",
   contactEmail: siteConfig.contactEmail,
   appLoginUrl: siteConfig.appLoginUrl,
   showInternalDeploymentMetrics: true,
@@ -33,6 +39,10 @@ const DEFAULT_SETTINGS: DynamicSiteSettings = {
     "Now scoping Q4 2026 operational pilots for South African private security companies (50–250 guards).",
   announcementLinkText: "Request a pilot walkthrough",
   announcementLinkHref: "/contact#demo-request",
+  acceptingDemoRequests: true,
+  acceptingEmailSignups: true,
+  notificationRecipientEmail: siteConfig.contactEmail,
+  webhookForwardingUrl: "",
   updatedAt: "2026-10-11T12:00:00.000Z",
 };
 
@@ -54,17 +64,17 @@ function getSettingsFilePath(): string {
 export function getSiteSettings(): DynamicSiteSettings {
   const filePath = getSettingsFilePath();
   if (!fs.existsSync(filePath)) {
-    return { ...DEFAULT_SETTINGS };
+    return { ...DEFAULT_SITE_SETTINGS };
   }
   try {
     const raw = fs.readFileSync(filePath, "utf-8");
     const parsed = JSON.parse(raw) as Partial<DynamicSiteSettings>;
     return {
-      ...DEFAULT_SETTINGS,
+      ...DEFAULT_SITE_SETTINGS,
       ...parsed,
     };
   } catch {
-    return { ...DEFAULT_SETTINGS };
+    return { ...DEFAULT_SITE_SETTINGS };
   }
 }
 
@@ -75,6 +85,16 @@ export function updateSiteSettings(
   const next: DynamicSiteSettings = {
     ...current,
     ...patch,
+    updatedAt: new Date().toISOString(),
+  };
+  const filePath = getSettingsFilePath();
+  fs.writeFileSync(filePath, JSON.stringify(next, null, 2), "utf-8");
+  return next;
+}
+
+export function resetSiteSettingsToDefault(): DynamicSiteSettings {
+  const next: DynamicSiteSettings = {
+    ...DEFAULT_SITE_SETTINGS,
     updatedAt: new Date().toISOString(),
   };
   const filePath = getSettingsFilePath();

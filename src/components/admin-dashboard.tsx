@@ -25,6 +25,9 @@ import {
   AlertCircle,
   Save,
   ArrowUpRight,
+  KeyRound,
+  ShieldCheck,
+  RotateCcw,
 } from "lucide-react";
 import { BrandLogo } from "@/components/brand-logo";
 import { MarkdownContent } from "@/components/markdown-content";
@@ -36,6 +39,7 @@ import type {
 } from "@/lib/submissions";
 import type { BlogArticle } from "@/lib/blog";
 import type { DynamicSiteSettings } from "@/lib/site-settings";
+import type { AdminSecurityInfo } from "@/lib/admin-auth";
 
 interface AdminLoginProps {
   usingDefaultPassword: boolean;
@@ -116,8 +120,8 @@ export function AdminLoginScreen({ usingDefaultPassword }: AdminLoginProps) {
                 </code>
               </p>
               <p className="mt-1 text-[11px] text-zinc-600">
-                Set <code className="font-mono">PLETHORA_ADMIN_PASSWORD</code> in{" "}
-                <code className="font-mono">.env.local</code> or Vercel environment variables before production deployment.
+                You can change this password directly inside{" "}
+                <strong>Website Settings → Security &amp; Access</strong> after signing in.
               </p>
             </div>
           )}
@@ -176,6 +180,7 @@ interface AdminDashboardProps {
   initialSubscriptions: SubscriptionRecord[];
   initialArticles: BlogArticle[];
   initialSettings: DynamicSiteSettings;
+  initialSecurityInfo: AdminSecurityInfo;
   usingDefaultPassword: boolean;
 }
 
@@ -200,6 +205,7 @@ export function AdminDashboard({
   initialSubscriptions,
   initialArticles,
   initialSettings,
+  initialSecurityInfo,
   usingDefaultPassword,
 }: AdminDashboardProps) {
   const [activeTab, setActiveTab] = useState<AdminTab>("overview");
@@ -210,6 +216,8 @@ export function AdminDashboard({
   const [articles, setArticles] = useState<BlogArticle[]>(initialArticles);
   const [settings, setSettings] =
     useState<DynamicSiteSettings>(initialSettings);
+  const [securityInfo, setSecurityInfo] =
+    useState<AdminSecurityInfo>(initialSecurityInfo);
 
   const [refreshing, setRefreshing] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -254,8 +262,18 @@ export function AdminDashboard({
   const [blogPreviewMode, setBlogPreviewMode] = useState(false);
   const [savingBlog, setSavingBlog] = useState(false);
 
-  // Settings state
+  // Settings & Password state
   const [savingSettings, setSavingSettings] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPasswords, setShowPasswords] = useState(false);
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [passwordFeedback, setPasswordFeedback] = useState<{
+    ok: boolean;
+    message: string;
+  } | null>(null);
+  const [revokingSessions, setRevokingSessions] = useState(false);
 
   function showToast(msg: string) {
     setToastMessage(msg);
@@ -600,6 +618,112 @@ export function AdminDashboard({
       }
     } finally {
       setSavingSettings(false);
+    }
+  }
+
+  async function handleResetSettings() {
+    if (
+      !window.confirm(
+        "Restore all website copy and controls back to Plethora defaults?"
+      )
+    ) {
+      return;
+    }
+    setSavingSettings(true);
+    try {
+      const res = await fetch("/api/admin/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ resetToDefaults: true }),
+      });
+      const data = await res.json();
+      if (res.ok && data.settings) {
+        setSettings(data.settings);
+        showToast("Website settings restored to official defaults.");
+      }
+    } finally {
+      setSavingSettings(false);
+    }
+  }
+
+  async function handleChangePassword(e: React.FormEvent) {
+    e.preventDefault();
+    setPasswordFeedback(null);
+
+    if (newPassword.trim().length < 8) {
+      setPasswordFeedback({
+        ok: false,
+        message: "New password must be at least 8 characters long.",
+      });
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setPasswordFeedback({
+        ok: false,
+        message: "New password and confirmation password do not match.",
+      });
+      return;
+    }
+
+    setChangingPassword(true);
+    try {
+      const res = await fetch("/api/admin/auth", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "change_password",
+          currentPassword,
+          newPassword,
+          confirmPassword,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        setCurrentPassword("");
+        setNewPassword("");
+        setConfirmPassword("");
+        if (data.securityInfo) {
+          setSecurityInfo(data.securityInfo);
+        }
+        setPasswordFeedback({
+          ok: true,
+          message:
+            data.message ||
+            "Administrator password updated and active session refreshed.",
+        });
+        showToast("Administrator password updated.");
+      } else {
+        setPasswordFeedback({
+          ok: false,
+          message: data.message || "Failed to update password.",
+        });
+      }
+    } catch {
+      setPasswordFeedback({
+        ok: false,
+        message: "Network error while updating password.",
+      });
+    } finally {
+      setChangingPassword(false);
+    }
+  }
+
+  async function handleRevokeSessions() {
+    setRevokingSessions(true);
+    try {
+      const res = await fetch("/api/admin/auth", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "revoke_sessions" }),
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        if (data.securityInfo) setSecurityInfo(data.securityInfo);
+        showToast("All other administrator sessions have been signed out.");
+      }
+    } finally {
+      setRevokingSessions(false);
     }
   }
 
@@ -1889,25 +2013,337 @@ export function AdminDashboard({
           </div>
         )}
 
-        {/* TAB 5: WEBSITE SETTINGS */}
+        {/* TAB 5: WEBSITE & SECURITY SETTINGS */}
         {activeTab === "settings" && (
-          <div className="space-y-6">
-            <div>
-              <p className="font-mono text-xs uppercase tracking-widest text-[#c04900]">
-                Live Website Configuration · data/site-settings.json
-              </p>
-              <h1 className="font-heading mt-1 text-2xl font-medium text-black">
-                Manage Public Website Copy &amp; Controls
-              </h1>
-              <p className="mt-1 text-sm text-zinc-600">
-                Changes saved here take effect immediately on the public Plethora website.
-              </p>
+          <div className="space-y-8">
+            <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+              <div>
+                <p className="font-mono text-xs uppercase tracking-widest text-[#c04900]">
+                  Security, Routing &amp; Live Website Configuration
+                </p>
+                <h1 className="font-heading mt-1 text-2xl font-medium text-black">
+                  Admin Security &amp; Website Controls
+                </h1>
+                <p className="mt-1 text-sm text-zinc-600">
+                  Manage administrator access credentials, active sessions, form intake routing, and live public website copy.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleResetSettings}
+                disabled={savingSettings}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[#d0ceca] bg-white px-3.5 py-2 text-xs font-medium text-zinc-700 hover:bg-[#f7f6f2] hover:text-black cursor-pointer"
+              >
+                <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                <span>Restore Default Website Copy</span>
+              </button>
             </div>
 
+            {/* PANEL 1: ADMINISTRATOR PASSWORD & SESSION SECURITY */}
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+              <form
+                onSubmit={handleChangePassword}
+                className="rounded-2xl border border-[#e4e4e4] bg-white p-6 sm:p-8 lg:col-span-8 space-y-5"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#e4e4e4] pb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-[#fff3eb] border border-[#fcb488] text-[#c04900]">
+                      <KeyRound className="h-5 w-5" aria-hidden="true" />
+                    </div>
+                    <div>
+                      <h2 className="font-heading text-lg font-medium text-black">
+                        Set New Administrator Password
+                      </h2>
+                      <p className="text-xs text-zinc-600">
+                        Stored as a salted <code className="font-mono">scrypt</code> hash in{" "}
+                        <code className="font-mono">data/admin-security.json</code>. Updating your password automatically invalidates other sessions.
+                      </p>
+                    </div>
+                  </div>
+                  <span
+                    className={`rounded-full px-3 py-1 text-xs font-medium ${
+                      securityInfo.usingDefaultPassword
+                        ? "bg-[#f4a834]/25 text-black border border-[#f4a834]"
+                        : "bg-[#5ad824]/20 text-black border border-[#5ad824]"
+                    }`}
+                  >
+                    {securityInfo.passwordSource === "custom_stored"
+                      ? "Custom Password Active"
+                      : securityInfo.passwordSource === "env_variable"
+                      ? "Environment Password Active"
+                      : "Default Dev Password Active"}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                  <div>
+                    <label
+                      htmlFor="current-admin-password"
+                      className="block text-xs font-medium text-black"
+                    >
+                      Current Password *
+                    </label>
+                    <input
+                      id="current-admin-password"
+                      type={showPasswords ? "text" : "password"}
+                      required
+                      autoComplete="current-password"
+                      value={currentPassword}
+                      onChange={(e) => setCurrentPassword(e.target.value)}
+                      placeholder="Current password..."
+                      className="mt-1.5 w-full rounded-lg border border-[#d0ceca] bg-white px-3.5 py-2 text-sm text-black focus:border-[#ff6e14] focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="new-admin-password"
+                      className="block text-xs font-medium text-black"
+                    >
+                      New Password (min 8 chars) *
+                    </label>
+                    <input
+                      id="new-admin-password"
+                      type={showPasswords ? "text" : "password"}
+                      required
+                      minLength={8}
+                      autoComplete="new-password"
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      placeholder="New strong password..."
+                      className="mt-1.5 w-full rounded-lg border border-[#d0ceca] bg-white px-3.5 py-2 text-sm text-black focus:border-[#ff6e14] focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="confirm-admin-password"
+                      className="block text-xs font-medium text-black"
+                    >
+                      Confirm New Password *
+                    </label>
+                    <input
+                      id="confirm-admin-password"
+                      type={showPasswords ? "text" : "password"}
+                      required
+                      minLength={8}
+                      autoComplete="new-password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="Repeat new password..."
+                      className="mt-1.5 w-full rounded-lg border border-[#d0ceca] bg-white px-3.5 py-2 text-sm text-black focus:border-[#ff6e14] focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                {passwordFeedback && (
+                  <div
+                    role="alert"
+                    className={`flex items-start gap-2 rounded-xl border p-3.5 text-xs ${
+                      passwordFeedback.ok
+                        ? "border-[#5ad824] bg-[#5ad824]/15 text-black"
+                        : "border-[#f63232]/40 bg-[#f63232]/10 text-black"
+                    }`}
+                  >
+                    {passwordFeedback.ok ? (
+                      <CheckCircle2 className="h-4 w-4 shrink-0 text-[#5ad824] mt-0.5" />
+                    ) : (
+                      <AlertCircle className="h-4 w-4 shrink-0 text-[#f63232] mt-0.5" />
+                    )}
+                    <span>{passwordFeedback.message}</span>
+                  </div>
+                )}
+
+                <div className="flex flex-wrap items-center justify-between gap-4 border-t border-[#e4e4e4] pt-4">
+                  <label className="inline-flex items-center gap-2 text-xs text-zinc-700 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={showPasswords}
+                      onChange={(e) => setShowPasswords(e.target.checked)}
+                      className="h-4 w-4 accent-[#ff6e14]"
+                    />
+                    <span>Show password characters</span>
+                  </label>
+
+                  <button
+                    type="submit"
+                    disabled={changingPassword}
+                    className="inline-flex items-center gap-2 rounded-lg bg-black px-4 py-2.5 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-60 cursor-pointer"
+                  >
+                    <KeyRound className="h-3.5 w-3.5 text-[#ff6e14]" aria-hidden="true" />
+                    <span>
+                      {changingPassword
+                        ? "Updating Password..."
+                        : "Update Administrator Password"}
+                    </span>
+                  </button>
+                </div>
+              </form>
+
+              {/* Session & Access Status Card */}
+              <div className="rounded-2xl border border-[#e4e4e4] bg-white p-6 sm:p-7 lg:col-span-4 flex flex-col justify-between space-y-5">
+                <div>
+                  <div className="flex items-center gap-2.5">
+                    <ShieldCheck className="h-5 w-5 text-[#ff6e14]" aria-hidden="true" />
+                    <h2 className="font-heading text-lg font-medium text-black">
+                      Session &amp; Access Status
+                    </h2>
+                  </div>
+
+                  <dl className="mt-4 space-y-3 text-xs">
+                    <div className="rounded-xl bg-[#f7f6f2] p-3 border border-[#e4e4e4]">
+                      <dt className="font-mono text-[10px] uppercase text-zinc-500">
+                        Active Credential Source
+                      </dt>
+                      <dd className="mt-1 font-medium text-black">
+                        {securityInfo.passwordSource === "custom_stored"
+                          ? "Custom Scrypt Password (Admin UI)"
+                          : securityInfo.passwordSource === "env_variable"
+                          ? "Environment Variable (PLETHORA_ADMIN_PASSWORD)"
+                          : "Default Local Credential (plethora-admin-2026)"}
+                      </dd>
+                    </div>
+
+                    <div className="rounded-xl bg-[#f7f6f2] p-3 border border-[#e4e4e4]">
+                      <dt className="font-mono text-[10px] uppercase text-zinc-500">
+                        Last Password Rotation
+                      </dt>
+                      <dd className="mt-1 font-mono text-black">
+                        {securityInfo.passwordUpdatedAt
+                          ? new Date(
+                              securityInfo.passwordUpdatedAt
+                            ).toLocaleString("en-ZA")
+                          : "Not rotated via UI yet"}
+                      </dd>
+                    </div>
+
+                    <div className="rounded-xl bg-[#f7f6f2] p-3 border border-[#e4e4e4]">
+                      <dt className="font-mono text-[10px] uppercase text-zinc-500">
+                        Session Token Policy
+                      </dt>
+                      <dd className="mt-1 text-black">
+                        HMAC-SHA256 HttpOnly cookie ·{" "}
+                        {securityInfo.sessionDurationHours}h expiry
+                      </dd>
+                    </div>
+                  </dl>
+                </div>
+
+                <div className="border-t border-[#e4e4e4] pt-4">
+                  <button
+                    type="button"
+                    disabled={revokingSessions}
+                    onClick={handleRevokeSessions}
+                    className="w-full rounded-lg border border-[#d0ceca] bg-[#f7f6f2] px-3.5 py-2.5 text-xs font-medium text-black hover:bg-[#fcb488] cursor-pointer"
+                  >
+                    {revokingSessions
+                      ? "Revoking other sessions..."
+                      : "Sign Out All Other Devices"}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* PANEL 2: PUBLIC WEBSITE CONFIGURATION FORM */}
             <form
               onSubmit={handleSaveSettings}
               className="space-y-6 rounded-2xl border border-[#e4e4e4] bg-white p-6 sm:p-8"
             >
+              {/* Lead Intake & Notification Routing */}
+              <div className="border-b border-[#e4e4e4] pb-6 space-y-4">
+                <div>
+                  <h2 className="font-heading text-lg font-medium text-black">
+                    Form Intake &amp; Notification Routing
+                  </h2>
+                  <p className="text-xs text-zinc-600">
+                    Control whether public forms accept submissions and where notifications or webhook events are routed.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <label className="flex items-start justify-between gap-3 rounded-xl border border-[#e4e4e4] bg-[#f7f6f2] p-4 cursor-pointer">
+                    <div>
+                      <span className="block text-xs font-medium text-black">
+                        Accept Demo Evaluation Enquiries
+                      </span>
+                      <span className="mt-0.5 block text-[11px] text-zinc-600">
+                        Allow security companies to submit the demo request form on / and /contact.
+                      </span>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={settings.acceptingDemoRequests}
+                      onChange={(e) =>
+                        setSettings({
+                          ...settings,
+                          acceptingDemoRequests: e.target.checked,
+                        })
+                      }
+                      className="mt-0.5 h-4 w-4 accent-[#ff6e14]"
+                    />
+                  </label>
+
+                  <label className="flex items-start justify-between gap-3 rounded-xl border border-[#e4e4e4] bg-[#f7f6f2] p-4 cursor-pointer">
+                    <div>
+                      <span className="block text-xs font-medium text-black">
+                        Accept Product Update Subscriptions
+                      </span>
+                      <span className="mt-0.5 block text-[11px] text-zinc-600">
+                        Allow visitors to subscribe to product and editorial updates.
+                      </span>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={settings.acceptingEmailSignups}
+                      onChange={(e) =>
+                        setSettings({
+                          ...settings,
+                          acceptingEmailSignups: e.target.checked,
+                        })
+                      }
+                      className="mt-0.5 h-4 w-4 accent-[#ff6e14]"
+                    />
+                  </label>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="block text-xs font-medium text-black">
+                      Notification Recipient Email (for Resend alerts)
+                    </label>
+                    <input
+                      type="email"
+                      value={settings.notificationRecipientEmail}
+                      onChange={(e) =>
+                        setSettings({
+                          ...settings,
+                          notificationRecipientEmail: e.target.value,
+                        })
+                      }
+                      placeholder="info@plethoraqbs.co.za"
+                      className="mt-1 w-full rounded-lg border border-[#d0ceca] px-3.5 py-2 text-sm text-black"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-black">
+                      Optional Webhook Forwarding URL (CRM / Slack / Zapier)
+                    </label>
+                    <input
+                      type="url"
+                      value={settings.webhookForwardingUrl}
+                      onChange={(e) =>
+                        setSettings({
+                          ...settings,
+                          webhookForwardingUrl: e.target.value,
+                        })
+                      }
+                      placeholder="https://hooks.example.com/plethora-leads"
+                      className="mt-1 w-full rounded-lg border border-[#d0ceca] px-3.5 py-2 font-mono text-sm text-black"
+                    />
+                  </div>
+                </div>
+              </div>
+
               {/* Announcement Banner Section */}
               <div className="border-b border-[#e4e4e4] pb-6">
                 <div className="flex items-center justify-between">
@@ -1937,8 +2373,8 @@ export function AdminDashboard({
                   </label>
                 </div>
 
-                <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
-                  <div className="sm:col-span-2">
+                <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-12">
+                  <div className="sm:col-span-6">
                     <label className="block text-xs font-medium text-black">
                       Announcement Message
                     </label>
@@ -1954,9 +2390,9 @@ export function AdminDashboard({
                       className="mt-1 w-full rounded-lg border border-[#d0ceca] px-3.5 py-2 text-sm text-black"
                     />
                   </div>
-                  <div>
+                  <div className="sm:col-span-3">
                     <label className="block text-xs font-medium text-black">
-                      Call-to-Action Link Label
+                      Link Label
                     </label>
                     <input
                       type="text"
@@ -1970,6 +2406,23 @@ export function AdminDashboard({
                       className="mt-1 w-full rounded-lg border border-[#d0ceca] px-3.5 py-2 text-sm text-black"
                     />
                   </div>
+                  <div className="sm:col-span-3">
+                    <label className="block text-xs font-medium text-black">
+                      Link Target Path
+                    </label>
+                    <input
+                      type="text"
+                      value={settings.announcementLinkHref}
+                      onChange={(e) =>
+                        setSettings({
+                          ...settings,
+                          announcementLinkHref: e.target.value,
+                        })
+                      }
+                      placeholder="/contact#demo-request"
+                      className="mt-1 w-full rounded-lg border border-[#d0ceca] px-3.5 py-2 font-mono text-sm text-black"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -1977,28 +2430,46 @@ export function AdminDashboard({
               <div className="border-b border-[#e4e4e4] pb-6 space-y-4">
                 <div>
                   <h2 className="font-heading text-lg font-medium text-black">
-                    Homepage Hero Messaging
+                    Homepage Hero &amp; Call-to-Action Copy
                   </h2>
                   <p className="text-xs text-zinc-600">
-                    Manage the primary headline and supporting subheadline on the homepage.
+                    Manage the primary headline, subheadline, and primary CTA button label.
                   </p>
                 </div>
 
-                <div>
-                  <label className="block text-xs font-medium text-black">
-                    Hero Eyebrow Badge
-                  </label>
-                  <input
-                    type="text"
-                    value={settings.heroBadgeText}
-                    onChange={(e) =>
-                      setSettings({
-                        ...settings,
-                        heroBadgeText: e.target.value,
-                      })
-                    }
-                    className="mt-1 w-full rounded-lg border border-[#d0ceca] px-3.5 py-2 text-sm text-black"
-                  />
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                  <div className="sm:col-span-2">
+                    <label className="block text-xs font-medium text-black">
+                      Hero Eyebrow Badge
+                    </label>
+                    <input
+                      type="text"
+                      value={settings.heroBadgeText}
+                      onChange={(e) =>
+                        setSettings({
+                          ...settings,
+                          heroBadgeText: e.target.value,
+                        })
+                      }
+                      className="mt-1 w-full rounded-lg border border-[#d0ceca] px-3.5 py-2 text-sm text-black"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-black">
+                      Primary CTA Button Label
+                    </label>
+                    <input
+                      type="text"
+                      value={settings.primaryCtaLabel}
+                      onChange={(e) =>
+                        setSettings({
+                          ...settings,
+                          primaryCtaLabel: e.target.value,
+                        })
+                      }
+                      className="mt-1 w-full rounded-lg border border-[#d0ceca] px-3.5 py-2 text-sm text-black"
+                    />
+                  </div>
                 </div>
 
                 <div>
@@ -2120,7 +2591,7 @@ export function AdminDashboard({
                 </div>
               </div>
 
-              <div className="flex items-center justify-between border-t border-[#e4e4e4] pt-5">
+              <div className="flex flex-wrap items-center justify-between gap-4 border-t border-[#e4e4e4] pt-5">
                 <span className="font-mono text-xs text-zinc-500">
                   Last updated:{" "}
                   {new Date(settings.updatedAt).toLocaleString("en-ZA")}

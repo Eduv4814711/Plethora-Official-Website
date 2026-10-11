@@ -1,6 +1,7 @@
 import React from "react";
 import type { Metadata } from "next";
 import {
+  getAdminSecurityInfo,
   isAuthenticatedAdmin,
   isUsingDefaultAdminPassword,
 } from "@/lib/admin-auth";
@@ -36,6 +37,7 @@ export default async function AdminPage() {
   const subscriptions = listSubscriptions();
   const articles = getAllArticles({ includeDrafts: true });
   const settings = getSiteSettings();
+  const securityInfo = getAdminSecurityInfo();
 
   return (
     <AdminDashboard
@@ -43,6 +45,7 @@ export default async function AdminPage() {
       initialSubscriptions={subscriptions}
       initialArticles={articles}
       initialSettings={settings}
+      initialSecurityInfo={securityInfo}
       usingDefaultPassword={usingDefaultPassword}
     />
   );

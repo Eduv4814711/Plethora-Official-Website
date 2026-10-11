@@ -40,5 +40,7 @@ next-env.d.ts
 /Original Plethora Logo*.svg
 /Plethora Official  Favicon.svg
 /data/site-settings.json
+/data/admin-security.json
+
 
 

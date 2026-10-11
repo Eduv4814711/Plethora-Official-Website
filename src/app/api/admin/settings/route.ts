@@ -4,6 +4,7 @@ import { isAuthenticatedAdmin } from "@/lib/admin-auth";
 import {
   DynamicSiteSettings,
   getSiteSettings,
+  resetSiteSettingsToDefault,
   updateSiteSettings,
 } from "@/lib/site-settings";
 import { sanitizeText } from "@/lib/submissions";
@@ -31,7 +32,19 @@ export async function PUT(req: NextRequest) {
   }
 
   try {
-    const body = (await req.json()) as Partial<DynamicSiteSettings>;
+    const body = (await req.json()) as Partial<DynamicSiteSettings> & {
+      resetToDefaults?: boolean;
+    };
+
+    if (body.resetToDefaults === true) {
+      const defaults = resetSiteSettingsToDefault();
+      revalidatePath("/", "layout");
+      return NextResponse.json({
+        ok: true,
+        settings: defaults,
+        message: "Website settings restored to official defaults.",
+      });
+    }
 
     const patch: Partial<DynamicSiteSettings> = {};
     if (body.heroBadgeText !== undefined) {
@@ -42,6 +55,9 @@ export async function PUT(req: NextRequest) {
     }
     if (body.heroSubheadline !== undefined) {
       patch.heroSubheadline = sanitizeText(body.heroSubheadline, 360);
+    }
+    if (body.primaryCtaLabel !== undefined) {
+      patch.primaryCtaLabel = sanitizeText(body.primaryCtaLabel, 50);
     }
     if (body.contactEmail !== undefined) {
       patch.contactEmail = sanitizeText(body.contactEmail, 160);
@@ -69,6 +85,24 @@ export async function PUT(req: NextRequest) {
     }
     if (body.announcementLinkHref !== undefined) {
       patch.announcementLinkHref = sanitizeText(body.announcementLinkHref, 200);
+    }
+    if (typeof body.acceptingDemoRequests === "boolean") {
+      patch.acceptingDemoRequests = body.acceptingDemoRequests;
+    }
+    if (typeof body.acceptingEmailSignups === "boolean") {
+      patch.acceptingEmailSignups = body.acceptingEmailSignups;
+    }
+    if (body.notificationRecipientEmail !== undefined) {
+      patch.notificationRecipientEmail = sanitizeText(
+        body.notificationRecipientEmail,
+        160
+      );
+    }
+    if (body.webhookForwardingUrl !== undefined) {
+      patch.webhookForwardingUrl = sanitizeText(
+        body.webhookForwardingUrl,
+        300
+      );
     }
 
     const updated = updateSiteSettings(patch);
